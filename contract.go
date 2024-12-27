@@ -1,6 +1,6 @@
-package openai
+package aichat
 
-type OpenAiCom interface {
+type AiCom interface {
 	Proxy(string)
 	Chat(string) (*Stream, error)
 	ChatEasy(string, ...any) (*Stream, error)

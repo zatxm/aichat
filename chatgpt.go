@@ -1,4 +1,4 @@
-package openai
+package aichat
 
 import (
 	"bufio"
@@ -22,7 +22,7 @@ type chatgpt struct {
 	client    *mreq.Client
 }
 
-func NewGptchat(token, proxyUrl string) OpenAiCom {
+func NewGptchat(token, proxyUrl string) AiCom {
 	client := mreq.C().SetUserAgent(userAgent).ImpersonateChrome()
 	if proxyUrl != "" {
 		client.SetProxyURL(proxyUrl)

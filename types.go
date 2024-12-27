@@ -1,4 +1,4 @@
-package openai
+package aichat
 
 type EventData struct {
 	Name string

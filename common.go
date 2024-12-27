@@ -1,4 +1,4 @@
-package openai
+package aichat
 
 import (
 	"bytes"

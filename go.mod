@@ -1,4 +1,4 @@
-module github.com/zatxm/openai
+module github.com/zatxm/aichat
 
 go 1.23.4
 
