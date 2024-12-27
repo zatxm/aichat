@@ -22,7 +22,7 @@ type chatgpt struct {
 	client    *mreq.Client
 }
 
-func NewGptchat(token, proxyUrl string) AiCom {
+func NewGptchat(token, proxyUrl string) AiCommon {
 	client := mreq.C().SetUserAgent(userAgent).ImpersonateChrome()
 	if proxyUrl != "" {
 		client.SetProxyURL(proxyUrl)

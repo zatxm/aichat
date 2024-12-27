@@ -1,6 +1,6 @@
 package aichat
 
-type AiCom interface {
+type AiCommon interface {
 	Proxy(string)
 	// 通用chat请求(统一请求格式)
 	Chat(*RequestChat) (*Stream, error)
