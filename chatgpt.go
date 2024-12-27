@@ -34,32 +34,19 @@ func (g *chatgpt) Proxy(proxyUrl string) {
 	g.client.SetProxyURL(proxyUrl)
 }
 
-// 原始数据请求，传递原始请求json字符串
-func (g *chatgpt) Chat(sourceReqStr string) (*Stream, error) {
-	var chatReq ChatgptCompletionRequest
-	if err := Json.UnmarshalFromString(sourceReqStr, &chatReq); err != nil {
-		return nil, errors.New("request params error")
-	}
-	return g.goChat(sourceReqStr)
-}
-
-func (g *chatgpt) ChatEasy(msg string, args ...any) (*Stream, error) {
+func (g *chatgpt) Chat(rc *RequestChat) (*Stream, error) {
 	// 通信请求体
-	msgId := "" //请求信息ID
-	if len(args) > 1 && args[1].(string) != "" {
-		msgId = args[1].(string)
-	} else {
+	msgId := rc.MessageId //请求信息ID
+	if msgId == "" {
 		msgId = uuid.NewString()
 	}
-	parentMsgId := "" //请求父信息ID
-	if len(args) > 2 && args[2].(string) != "" {
-		parentMsgId = args[2].(string)
-	} else {
+	parentMsgId := rc.ParentMessageId //请求父信息ID
+	if parentMsgId == "" {
 		parentMsgId = uuid.NewString()
 	}
-	model := "auto"
-	if len(args) > 0 && args[0].(string) != "" {
-		model = args[0].(string)
+	model := rc.Model
+	if model == "" {
+		model = "auto"
 	}
 	var reqMsg []*ChatgptRequestMessage
 	reqMsg = append(reqMsg, &ChatgptRequestMessage{
@@ -67,7 +54,7 @@ func (g *chatgpt) ChatEasy(msg string, args ...any) (*Stream, error) {
 		Author: map[string]string{"role": "user"},
 		Content: &ChatgptRequestContent{
 			ContentType: "text",
-			Parts:       []string{msg}},
+			Parts:       []any{rc.Message}},
 		CreateTime: nowTimePay(),
 		Metadata:   map[string]any{"custom_symbol_offsets": []any{}},
 	})
@@ -93,8 +80,8 @@ func (g *chatgpt) ChatEasy(msg string, args ...any) (*Stream, error) {
 		// Timezone:                         "Asia/Shanghai",
 		TimezoneOffsetMin:  -480,
 		WebsocketRequestId: uuid.NewString()}
-	if len(args) > 3 && args[3].(string) != "" {
-		goReq.ConversationId = args[3].(string) //会话ID
+	if rc.ConversationId != "" {
+		goReq.ConversationId = rc.ConversationId //会话ID
 	}
 	reqBody, err := Json.MarshalToString(goReq)
 	if err != nil {
@@ -104,8 +91,46 @@ func (g *chatgpt) ChatEasy(msg string, args ...any) (*Stream, error) {
 	return g.goChat(reqBody)
 }
 
+func (g *chatgpt) ChatApi(apiReqStr string) (*Stream, error) {
+	return nil, nil
+}
+
+// 原始数据请求，传递原始请求json字符串
+func (g *chatgpt) ChatSource(sourceReqStr string) (*Stream, error) {
+	var chatReq ChatgptCompletionRequest
+	if err := Json.UnmarshalFromString(sourceReqStr, &chatReq); err != nil {
+		return nil, errors.New("request params error")
+	}
+	return g.goChat(sourceReqStr)
+}
+
 // 传递原始请求json字符串
-func (g *chatgpt) ChatToApi(sourceReqStr string) (*Stream, error) {
+func (g *chatgpt) ChatToApi(rc *RequestChat) (*Stream, error) {
+	return nil, nil
+}
+
+// 传递原始请求json字符串
+func (g *chatgpt) ChatToApiSource(sourceReqStr string) (*Stream, error) {
+	return nil, nil
+}
+
+func (g *chatgpt) ApiCrossChatToApi(apiReqStr string) (*Stream, error) {
+	return nil, nil
+}
+
+func (g *chatgpt) ChatToOpenai(rc *RequestChat) (*Stream, error) {
+	return nil, nil
+}
+
+func (g *chatgpt) ChatToOpenaiSource(sourceReqStr string) (*Stream, error) {
+	return nil, nil
+}
+
+func (g *chatgpt) ApiToOpenai(apiReqStr string) (*Stream, error) {
+	return nil, nil
+}
+
+func (g *chatgpt) ApiCrossChatToOpenai(apiReqStr string) (*Stream, error) {
 	return nil, nil
 }
 

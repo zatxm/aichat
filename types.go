@@ -10,6 +10,17 @@ type Stream struct {
 	Closed chan struct{}
 }
 
+// 通用请求
+type RequestChat struct {
+	MessageId       string   `json:"message_id,omitempty"`        //信息ID、标识
+	ParentMessageId string   `json:"parent_message_id,omitempty"` //父信息ID、标识
+	Model           string   `json:"model,omitempty"`             //对话模型
+	Message         string   `json:"message" binding:"required"`  //请求信息
+	Files           []string `json:"files,omitempty"`             //附件内容base64
+	ConversationId  string   `json:"conversation_id,omitempty"`   //会话ID
+	Ext             any      `json:"ext,omitempty"`               //额外信息
+}
+
 /*****chatgpt****/
 type ChatRequirement struct {
 	Persona   string `json:"persona"`
@@ -66,10 +77,17 @@ type ChatgptRequestMessage struct {
 	Author     map[string]string      `json:"author" binding:"required"` //{"role":"user"}
 	Content    *ChatgptRequestContent `json:"content" binding:"required"`
 	CreateTime float64                `json:"create_time,omitempty"` //调用nowTimePay()
-	Metadata   map[string]any         `json:"metadata,omitempty"`    //默认{"serialization_metadata":{"custom_symbol_offsets":[]}}
+	// 默认{"serialization_metadata":{"custom_symbol_offsets":[]}}
+	// 附件如下:
+	// {"attachments":[{"id":"file-79q4G4iAyZQpPSNwqUmf7b","size":179129,
+	// "name":"stock-photo-portrait-of-beautiful-long-haired-young-asian-office-woman-side-face-in-cream-suit-with-braces-on-2504794537.jpg",
+	// "mime_type":"image/jpeg","width":1500,"height":1100}],"serialization_metadata":{"custom_symbol_offsets":[]}}
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 type ChatgptRequestContent struct {
-	ContentType string   `json:"content_type" binding:"required"`
-	Parts       []string `json:"parts" binding:"required"`
+	ContentType string `json:"content_type" binding:"required"` //text multimodal_text
+	// 附件类型时如:
+	// {"content_type":"image_asset_pointer","asset_pointer":"file-service://file-79q4G4iAyZQpPSNwqUmf7b","size_bytes":179129,"width":1500,"height":1100}
+	Parts []any `json:"parts" binding:"required"`
 }
