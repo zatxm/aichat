@@ -34,7 +34,16 @@ func (g *chatgpt) Proxy(proxyUrl string) {
 	g.client.SetProxyURL(proxyUrl)
 }
 
-func (g *chatgpt) Chat(msg string, args ...any) (*Stream, error) {
+// 原始数据请求，传递原始请求json字符串
+func (g *chatgpt) Chat(sourceReqStr string) (*Stream, error) {
+	var chatReq ChatgptCompletionRequest
+	if err := Json.UnmarshalFromString(sourceReqStr, &chatReq); err != nil {
+		return nil, errors.New("request params error")
+	}
+	return g.goChat(sourceReqStr)
+}
+
+func (g *chatgpt) ChatEasy(msg string, args ...any) (*Stream, error) {
 	// 通信请求体
 	msgId := "" //请求信息ID
 	if len(args) > 1 && args[1].(string) != "" {
@@ -95,13 +104,9 @@ func (g *chatgpt) Chat(msg string, args ...any) (*Stream, error) {
 	return g.goChat(reqBody)
 }
 
-// 原始数据请求，传递原始请求json字符串
-func (g *chatgpt) ChatSource(sourceReqStr string) (*Stream, error) {
-	var chatReq ChatgptCompletionRequest
-	if err := Json.UnmarshalFromString(sourceReqStr, &chatReq); err != nil {
-		return nil, errors.New("request params error")
-	}
-	return g.goChat(sourceReqStr)
+// 传递原始请求json字符串
+func (g *chatgpt) ChatToApi(sourceReqStr string) (*Stream, error) {
+	return nil, nil
 }
 
 func (g *chatgpt) goChat(goReqJsonStr string) (*Stream, error) {
