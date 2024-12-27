@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math/rand"
 	"net/http"
@@ -36,41 +35,6 @@ func (g *chatgpt) Proxy(proxyUrl string) {
 }
 
 func (g *chatgpt) Chat(msg string, args ...any) (*Stream, error) {
-	g.startTime = time.Now()
-	requireProof := "gAAAAAC" + g.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
-
-	deviceId := uuid.NewString()
-	g.client.SetCommonCookies(&http.Cookie{Name: "oai-did", Value: deviceId, Path: "/", Domain: hostURL.Host})
-	rq := g.client.R().
-		SetHeader("accept", "*/*").
-		SetHeader("content-type", contentTypeJson).
-		SetHeader("Oai-Device-Id", deviceId).
-		SetHeader("Oai-Language", "en-US")
-	var chatRequirementUrl, chatUrl string
-	if g.token == "" {
-		chatRequirementUrl = "https://chatgpt.com/backend-anon/sentinel/chat-requirements"
-		chatUrl = "https://chatgpt.com/backend-anon/conversation"
-	} else {
-		chatRequirementUrl = "https://chatgpt.com/backend-api/sentinel/chat-requirements"
-		chatUrl = "https://chatgpt.com/backend-api/conversation"
-		rq.SetBearerAuthToken(g.token)
-	}
-	jsonBody, _ := Json.Marshal(map[string]string{"p": requireProof})
-	resp, err := rq.SetBodyBytes(jsonBody).Post(chatRequirementUrl)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var require ChatRequirement
-	err = Json.NewDecoder(resp.Body).Decode(&require)
-	if err != nil {
-		return nil, err
-	}
-	if g.token == "" && require.ForceLogin {
-		return nil, errors.New("Must login")
-	}
-
-	/*****通信对话*****/
 	// 通信请求体
 	msgId := "" //请求信息ID
 	if len(args) > 1 && args[1].(string) != "" {
@@ -117,16 +81,65 @@ func (g *chatgpt) Chat(msg string, args ...any) (*Stream, error) {
 		SupportedEncodings:               []string{"v1"},
 		SupportsBuffering:                true,
 		SystemHints:                      []any{},
-		Timezone:                         "Asia/Shanghai",
-		TimezoneOffsetMin:                -480,
-		WebsocketRequestId:               uuid.NewString()}
+		// Timezone:                         "Asia/Shanghai",
+		TimezoneOffsetMin:  -480,
+		WebsocketRequestId: uuid.NewString()}
 	if len(args) > 3 && args[3].(string) != "" {
 		goReq.ConversationId = args[3].(string) //会话ID
 	}
-	reqBody, err := json.Marshal(goReq)
+	reqBody, err := Json.MarshalToString(goReq)
 	if err != nil {
 		return nil, err
 	}
+
+	return g.goChat(reqBody)
+}
+
+// 原始数据请求，传递原始请求json字符串
+func (g *chatgpt) ChatSource(sourceReqStr string) (*Stream, error) {
+	var chatReq ChatgptCompletionRequest
+	if err := Json.UnmarshalFromString(sourceReqStr, &chatReq); err != nil {
+		return nil, errors.New("request params error")
+	}
+	return g.goChat(sourceReqStr)
+}
+
+func (g *chatgpt) goChat(goReqJsonStr string) (*Stream, error) {
+	g.startTime = time.Now()
+	requireProof := "gAAAAAC" + g.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
+
+	deviceId := uuid.NewString()
+	g.client.SetCommonCookies(&http.Cookie{Name: "oai-did", Value: deviceId, Path: "/", Domain: hostURL.Host})
+	rq := g.client.R().
+		SetHeader("accept", "*/*").
+		SetHeader("content-type", contentTypeJson).
+		SetHeader("Oai-Device-Id", deviceId).
+		SetHeader("Oai-Language", "en-US")
+	var chatRequirementUrl, chatUrl string
+	if g.token == "" {
+		chatRequirementUrl = "https://chatgpt.com/backend-anon/sentinel/chat-requirements"
+		chatUrl = "https://chatgpt.com/backend-anon/conversation"
+	} else {
+		chatRequirementUrl = "https://chatgpt.com/backend-api/sentinel/chat-requirements"
+		chatUrl = "https://chatgpt.com/backend-api/conversation"
+		rq.SetBearerAuthToken(g.token)
+	}
+	jsonBody, _ := Json.Marshal(map[string]string{"p": requireProof})
+	resp, err := rq.SetBodyBytes(jsonBody).Post(chatRequirementUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var require ChatRequirement
+	err = Json.NewDecoder(resp.Body).Decode(&require)
+	if err != nil {
+		return nil, err
+	}
+	if g.token == "" && require.ForceLogin {
+		return nil, errors.New("Must login")
+	}
+
+	/*****通信对话*****/
 	rq.SetHeader("accept", "text/event-stream").
 		SetHeader("openai-sentinel-chat-requirements-token", require.Token)
 	if require.Proofofwork.Required {
@@ -139,7 +152,7 @@ func (g *chatgpt) Chat(msg string, args ...any) (*Stream, error) {
 	}
 	resp, err = rq.SetHeader("origin", "https://chatgpt.com").
 		SetHeader("referer", "https://chatgpt.com/").
-		SetBodyBytes(reqBody).
+		SetBody(goReqJsonStr).
 		Post(chatUrl)
 	if err != nil {
 		return nil, err
@@ -214,8 +227,8 @@ func (g *chatgpt) generateAnswer(seed string, diff string) string {
 	for i := 0; i < 500000; i++ {
 		config[3] = i
 		config[9] = (i + 2) / 2
-		json, _ := json.Marshal(config)
-		base := base64.StdEncoding.EncodeToString(json)
+		jStr, _ := Json.Marshal(config)
+		base := base64.StdEncoding.EncodeToString(jStr)
 		hasher.Write([]byte(seed + base))
 		hash := hasher.Sum(nil)
 		hasher.Reset()
