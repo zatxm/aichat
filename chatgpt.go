@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -19,6 +20,7 @@ import (
 type chatgpt struct {
 	token     string
 	proxyUrl  string
+	uuid      string
 	startTime time.Time
 	client    *mreq.Client
 }
@@ -75,8 +77,8 @@ func (g *chatgpt) Chat(rc *ChatCompletionRequest) (*Stream, error) {
 		var reqMsg []*ChatgptRequestMessage
 		reqMsg = append(reqMsg, &ChatgptRequestMessage{
 			ID:     msgId,
-			Author: map[string]string{"role": "user"},
-			Content: &ChatgptRequestContent{
+			Author: &ChatgptAuthor{Role: "user"},
+			Content: &ChatgptContent{
 				ContentType: "text",
 				Parts:       []any{msg}},
 			CreateTime: nowTimePay(),
@@ -164,7 +166,74 @@ func (g *chatgpt) ChatApi(rc *ChatCompletionRequest) (*Stream, error) {
 }
 
 func (g *chatgpt) ChatToApi(rc *ChatCompletionRequest) (*Stream, error) {
-	return nil, nil
+	var goReqStr string
+	if rc.Source != "" {
+		goReq := &ChatgptCompletionRequest{}
+		err := Json.UnmarshalFromString(rc.Source, &goReq)
+		if err != nil {
+			return nil, err
+		}
+		goReqStr = rc.Source
+	} else {
+		msg := rc.ParsePromptText()
+		if msg == "" {
+			return nil, errors.New("request error:message empty")
+		}
+		// 通信请求体
+		if rc.Chatgpt == nil {
+			rc.Chatgpt = &ChatgptRequest{}
+		}
+		msgId := rc.Chatgpt.MessageId //请求信息ID
+		if msgId == "" {
+			msgId = uuid.NewString()
+		}
+		parentMsgId := rc.Chatgpt.ParentMessageId //请求父信息ID
+		if parentMsgId == "" {
+			parentMsgId = uuid.NewString()
+		}
+		model := rc.Model
+		if model == "" {
+			model = "auto"
+		}
+		var reqMsg []*ChatgptRequestMessage
+		reqMsg = append(reqMsg, &ChatgptRequestMessage{
+			ID:     msgId,
+			Author: &ChatgptAuthor{Role: "user"},
+			Content: &ChatgptContent{
+				ContentType: "text",
+				Parts:       []any{msg}},
+			CreateTime: nowTimePay(),
+			Metadata:   map[string]any{"custom_symbol_offsets": []any{}},
+		})
+		goReq := &ChatgptCompletionRequest{
+			Action:                           "next",
+			ClientContextualInfo:             newChatgptClientContextualInfo(),
+			ConversationMode:                 map[string]string{"kind": "primary_assistant"},
+			ConversationOrigin:               nil,
+			ForceParagen:                     false,
+			ForceParagenModelSlug:            "",
+			ForceRateLimit:                   false,
+			HistoryAndTrainingDisabled:       false,
+			Messages:                         reqMsg,
+			Model:                            model,
+			ParagenCotSummaryDisplayOverride: "allow",
+			ParagenStreamTypeOverride:        nil,
+			ParentMessageId:                  parentMsgId,
+			ResetRateLimits:                  false,
+			Suggestions:                      []string{},
+			SupportedEncodings:               []string{"v1"},
+			SupportsBuffering:                true,
+			SystemHints:                      []any{},
+			// Timezone:                         "Asia/Shanghai",
+			TimezoneOffsetMin:  -480,
+			WebsocketRequestId: uuid.NewString()}
+		if rc.Chatgpt.ConversationId != "" {
+			goReq.ConversationId = rc.Chatgpt.ConversationId //会话ID
+		}
+		goReqStr, _ = Json.MarshalToString(goReq)
+	}
+
+	return g.goChatgptToApi(goReqStr)
 }
 
 func (g *chatgpt) ChatToApiSource(sourceReqStr string) (*Stream, error) {
@@ -191,56 +260,71 @@ func (g *chatgpt) ApiCrossChatToOpenai(apiReqStr string) (*Stream, error) {
 	return nil, nil
 }
 
-func (g *chatgpt) goChatgpt(goReqJsonStr string) (*Stream, error) {
-	g.startTime = time.Now()
-	requireProof := "gAAAAAC" + g.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
-
-	deviceId := uuid.NewString()
-	g.client.SetCommonCookies(&http.Cookie{Name: "oai-did", Value: deviceId, Path: "/", Domain: hostURL.Host})
+func (g *chatgpt) goChatRequirement(requireProof string) (*ChatgptRequirement, *mreq.Request, error) {
+	if g.uuid == "" {
+		g.uuid = uuid.NewString()
+		g.client.SetCommonCookies(&http.Cookie{Name: "oai-did", Value: g.uuid, Path: "/", Domain: hostURL.Host})
+	}
 	rq := g.client.R().
 		SetHeader("accept", "*/*").
 		SetHeader("content-type", contentTypeJson).
-		SetHeader("Oai-Device-Id", deviceId).
+		SetHeader("Oai-Device-Id", g.uuid).
 		SetHeader("Oai-Language", "en-US")
-	var chatRequirementUrl, chatUrl string
+	var chatRequirementUrl string
 	if g.token == "" {
 		chatRequirementUrl = "https://chatgpt.com/backend-anon/sentinel/chat-requirements"
-		chatUrl = "https://chatgpt.com/backend-anon/conversation"
 	} else {
 		chatRequirementUrl = "https://chatgpt.com/backend-api/sentinel/chat-requirements"
-		chatUrl = "https://chatgpt.com/backend-api/conversation"
 		rq.SetBearerAuthToken(g.token)
 	}
 	jsonBody, _ := Json.Marshal(map[string]string{"p": requireProof})
 	resp, err := rq.SetBodyBytes(jsonBody).Post(chatRequirementUrl)
 	if err != nil {
-		return nil, err
+		return nil, rq, err
 	}
 	defer resp.Body.Close()
 	var require ChatgptRequirement
 	err = Json.NewDecoder(resp.Body).Decode(&require)
 	if err != nil {
-		return nil, err
+		return nil, rq, err
 	}
 	if g.token == "" && require.ForceLogin {
-		return nil, errors.New("Must login")
+		return nil, rq, errors.New("Must login")
 	}
+	return &require, rq, nil
+}
 
+func (g *chatgpt) doChatgptRequest(reqStr string, rq *mreq.Request, require *ChatgptRequirement) (*mreq.Response, error) {
 	/*****通信对话*****/
+	var chatUrl string
+	if g.token == "" {
+		chatUrl = "https://chatgpt.com/backend-anon/conversation"
+	} else {
+		chatUrl = "https://chatgpt.com/backend-api/conversation"
+	}
 	rq.SetHeader("accept", "text/event-stream").
 		SetHeader("openai-sentinel-chat-requirements-token", require.Token)
 	if require.Proofofwork.Required {
-		proofToken := g.parseProofToken(&require)
+		proofToken := g.parseProofToken(require)
 		rq.SetHeader("openai-sentinel-proof-token", proofToken)
 	}
 	if require.Turnstile.Required {
 		turnstileToken := "" //暂时为空，不需要
 		rq.SetHeader("openai-sentinel-turnstile-token", turnstileToken)
 	}
-	resp, err = rq.SetHeader("origin", "https://chatgpt.com").
+	return rq.SetHeader("origin", "https://chatgpt.com").
 		SetHeader("referer", "https://chatgpt.com/").
-		SetBody(goReqJsonStr).
+		SetBody(reqStr).
 		Post(chatUrl)
+}
+
+func (g *chatgpt) goChatgpt(goReqJsonStr string) (*Stream, error) {
+	g.startTime = time.Now()
+	requireProof := "gAAAAAC" + g.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
+	require, rq, err := g.goChatRequirement(requireProof)
+
+	// 通信对话
+	resp, err := g.doChatgptRequest(goReqJsonStr, rq, require)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +332,8 @@ func (g *chatgpt) goChatgpt(goReqJsonStr string) (*Stream, error) {
 	if resp.StatusCode != 200 {
 		return nil, errors.New("request chat return http status error")
 	}
+
+	// 处理返回
 	stream := &Stream{
 		Events: make(chan *EventData),
 		Closed: make(chan struct{}),
@@ -264,6 +350,93 @@ func (g *chatgpt) goChatgpt(goReqJsonStr string) (*Stream, error) {
 			}
 			stream.Events <- &EventData{Name: "", Data: line}
 		}
+	}()
+	return stream, nil
+}
+
+func (g *chatgpt) goChatgptToApi(goReqJsonStr string) (*Stream, error) {
+	g.startTime = time.Now()
+	requireProof := "gAAAAAC" + g.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
+	require, rq, err := g.goChatRequirement(requireProof)
+
+	// 通信对话
+	resp, err := g.doChatgptRequest(goReqJsonStr, rq, require)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, errors.New("request chat return http status error")
+	}
+
+	// 处理返回
+	stream := &Stream{
+		Events: make(chan *EventData),
+		Closed: make(chan struct{}),
+	}
+	var resMsgId, resMsgParentId, conversationId, model string
+	createdAt := time.Now().Unix()
+	go func() {
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			if line == "\n" {
+				continue
+			}
+			raw := line[6:]
+			if !strings.HasPrefix(raw, "[DONE]") {
+				raw = strings.TrimSuffix(raw, "\n")
+				chatRes := map[string]any{}
+				err := Json.UnmarshalFromString(raw, &chatRes)
+				if err != nil {
+					continue
+				}
+				if _, ok := chatRes["v"]; ok {
+					switch chatRes["v"].(type) {
+					case string:
+						var choices []*ChatCompletionChoice
+						choices = append(choices, &ChatCompletionChoice{
+							Delta: &ChatCompletionMessage{
+								Role:    "assistant",
+								Content: chatRes["v"].(string),
+							},
+							Index: 0,
+						})
+						outRes := &ChatCompletionResponse{
+							ID:      resMsgId,
+							Choices: choices,
+							Created: createdAt,
+							Model:   model,
+							Object:  "chat.completion.chunk",
+							Chatgpt: &ChatgptResponse{
+								MessageId:       resMsgId,
+								ParentMessageId: resMsgParentId,
+								ConversationId:  conversationId,
+							},
+						}
+						outJson, _ := Json.MarshalToString(outRes)
+						stream.Events <- &EventData{Name: "", Data: outJson + "\n\n"}
+					case map[string]any:
+						var rMsg ChatgptCompletionResponse
+						err := Json.UnmarshalFromString(raw, &rMsg)
+						if err != nil {
+							continue
+						}
+						if rMsg.V.Message.Author.Role == "assistant" {
+							conversationId = rMsg.V.ConversationId
+							resMsgId = rMsg.V.Message.Metadata.ParentId
+							resMsgParentId = rMsg.V.Message.ID
+							model = rMsg.V.Message.Metadata.ModelSlug
+							createdAt = int64(rMsg.V.Message.CreateTime)
+						}
+					}
+				}
+			}
+		}
+		stream.Events <- &EventData{Name: "", Data: "data: [DONE]\n\n"}
 	}()
 	return stream, nil
 }

@@ -5,11 +5,11 @@ type AiCommon interface {
 	SetProxy(string)
 	// 设置鉴权token等
 	SetAuth(string)
-	// 通用chat请求(统一请求格式),stream
+	// 通用chat请求,stream
 	Chat(*ChatCompletionRequest) (*Stream, error)
-	// 原始api json数据请求(不一定是json数据，以下同)
+	// 原始api请求
 	ChatApi(*ChatCompletionRequest) (*Stream, error)
-	// 通用chat请求(统一请求格式)转Api返回格式
+	// 通用chat请求转Api返回格式
 	ChatToApi(*ChatCompletionRequest) (*Stream, error)
 	// 原始json数据字符串chat请求转Api返回格式
 	ChatToApiSource(string) (*Stream, error)

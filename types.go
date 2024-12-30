@@ -64,10 +64,10 @@ type ChatgptClientContextualInfo struct {
 }
 
 type ChatgptRequestMessage struct {
-	ID         string                 `json:"id" binding:"required"`
-	Author     map[string]string      `json:"author" binding:"required"` //{"role":"user"}
-	Content    *ChatgptRequestContent `json:"content" binding:"required"`
-	CreateTime float64                `json:"create_time,omitempty"` //调用nowTimePay()
+	ID         string          `json:"id" binding:"required"`
+	Author     *ChatgptAuthor  `json:"author" binding:"required"` //{"role":"user"}
+	Content    *ChatgptContent `json:"content" binding:"required"`
+	CreateTime float64         `json:"create_time,omitempty"` //调用nowTimePay()
 	// 默认{"serialization_metadata":{"custom_symbol_offsets":[]}}
 	// 附件如下:
 	// {"attachments":[{"id":"file-79q4G4iAyZQpPSNwqUmf7b","size":179129,
@@ -76,11 +76,62 @@ type ChatgptRequestMessage struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-type ChatgptRequestContent struct {
+type ChatgptAuthor struct {
+	Role     string         `json:"role"`
+	Name     string         `json:"name,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type ChatgptContent struct {
 	ContentType string `json:"content_type" binding:"required"` //text multimodal_text
 	// 附件类型时如:
 	// {"content_type":"image_asset_pointer","asset_pointer":"file-service://file-79q4G4iAyZQpPSNwqUmf7b","size_bytes":179129,"width":1500,"height":1100}
 	Parts []any `json:"parts" binding:"required"`
+}
+
+type ChatgptMetadata struct {
+	Citations         []*Citation `json:"citations,omitempty"`
+	MessageType       string      `json:"message_type,omitempty"`
+	ModelSlug         string      `json:"model_slug,omitempty"`
+	DefaultModelSlug  string      `json:"default_model_slug,omitempty"`
+	ParentId          string      `json:"parent_id,omitempty"`
+	ModelSwitcherDeny []any       `json:"model_switcher_deny,omitempty"`
+}
+
+type Citation struct {
+	Metadata CitaMeta `json:"metadata"`
+	StartIx  int      `json:"start_ix"`
+	EndIx    int      `json:"end_ix"`
+}
+
+type CitaMeta struct {
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+type ChatgptCompletionResponse struct {
+	V *ChatgptCompletionV `json:"v"`
+	C int                 `json:"c"`
+}
+
+type ChatgptCompletionV struct {
+	Message        *ChatgptCompletionVMessage `json:"message"`
+	ConversationId string                     `json:"conversation_id"`
+	Error          string                     `json:"error"`
+}
+
+type ChatgptCompletionVMessage struct {
+	ID         string           `json:"id"`
+	Author     *ChatgptAuthor   `json:"author"`
+	CreateTime float64          `json:"create_time"`
+	UpdateTime float64          `json:"update_time,omitempty"`
+	Content    *ChatgptContent  `json:"content"`
+	Status     string           `json:"status"`
+	EndTurn    bool             `json:"end_turn,omitempty"`
+	Weight     float64          `json:"weight"`
+	Metadata   *ChatgptMetadata `json:"metadata"`
+	Recipient  string           `json:"recipient"`
+	Channel    string           `json:"channel,omitempty"`
 }
 
 type ChatgptRequest struct {
@@ -90,6 +141,13 @@ type ChatgptRequest struct {
 	ConversationId  string   `json:"conversation_id,omitempty"`   //会话ID
 	ArkoseToken     string   `json:"arkose_token,omitempty"`
 	Index           string   `json:"index,omitempty"` //用户定义逻辑ID
+}
+
+type ChatgptResponse struct {
+	MessageId       string `json:"message_id"`                //本次会话信息ID
+	ParentMessageId string `json:"parent_message_id"`         //对话返回的父信息ID,下次请求的parent_message_id用这个
+	ConversationId  string `json:"conversation_id,omitempty"` //会话ID
+	Index           string `json:"index,omitempty"`
 }
 
 // openai api
@@ -256,6 +314,49 @@ type FunctionDefinition struct {
 	Description string            `json:"description,omitempty"`
 	Parameters  map[string]string `json:"parameters,omitempty"`
 	Strict      bool              `json:"strict,omitempty"` //默认false
+}
+
+type ChatCompletionResponse struct {
+	ID                string                  `json:"id"`
+	Choices           []*ChatCompletionChoice `json:"choices"`
+	Created           int64                   `json:"created"`
+	Model             string                  `json:"model"`
+	ServiceTier       string                  `json:"service_tier,omitempty"`
+	SystemFingerprint string                  `json:"system_fingerprint"`
+	Object            string                  `json:"object"`
+	Usage             *Usage                  `json:"usage,omitempty"`
+
+	// chatgpt额外信息
+	Chatgpt *ChatgptResponse `json:"chatgpt,omitempty"`
+}
+
+type ChatCompletionChoice struct {
+	Delta        *ChatCompletionMessage `json:"delta,omitempty"`
+	LogProbs     *LogProbs              `json:"logprobs"`
+	FinishReason string                 `json:"finish_reason"`
+	Index        int                    `json:"index"`
+}
+
+type LogProbs struct {
+	Content []*LogProbContent `json:"content,omitempty"`
+	Refusal []*LogProbContent `json:"refusal,omitempty"`
+}
+
+type LogProbContent struct {
+	LogProb
+	TopLogprobs []LogProb `json:"top_logprobs"`
+}
+
+type LogProb struct {
+	Token   string  `json:"token"`
+	Logprob float64 `json:"logprob"`
+	Bytes   []byte  `json:"bytes,omitempty"`
+}
+
+type Usage struct {
+	CompletionTokens int `json:"completion_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 /*****openai end****/
