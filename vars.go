@@ -1,6 +1,7 @@
 package aichat
 
 import (
+	"errors"
 	"net/url"
 	"time"
 
@@ -13,7 +14,10 @@ const (
 )
 
 var (
-	Json            = jsoniter.ConfigCompatibleWithStandardLibrary
+	errContentFieldsMisused = errors.New("can't use both Content and MultiContent properties simultaneously")
+
+	Json = jsoniter.ConfigCompatibleWithStandardLibrary
+
 	hostURL, _      = url.Parse("https://chatgpt.com")
 	cores           = []int{16, 24, 32}
 	screens         = []int{3000, 4000, 6000}
@@ -379,4 +383,5 @@ var (
 		"__STATSIG_JS_SDK__",
 		"__STATSIG_RERENDER_OVERRIDE__",
 		"_oaiHandleSessionExpired"}
+	openaiApiUrl = "https://api.openai.com/v1"
 )

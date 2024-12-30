@@ -6,23 +6,14 @@ type EventData struct {
 }
 
 type Stream struct {
+	Data   string //一般是错误之间返回的信息
 	Events chan *EventData
 	Closed chan struct{}
 }
 
-// 通用请求
-type RequestChat struct {
-	MessageId       string   `json:"message_id,omitempty"`        //信息ID、标识
-	ParentMessageId string   `json:"parent_message_id,omitempty"` //父信息ID、标识
-	Model           string   `json:"model,omitempty"`             //对话模型
-	Message         string   `json:"message" binding:"required"`  //请求信息
-	Files           []string `json:"files,omitempty"`             //附件内容base64
-	ConversationId  string   `json:"conversation_id,omitempty"`   //会话ID
-	Ext             any      `json:"ext,omitempty"`               //额外信息
-}
-
-/*****chatgpt****/
-type ChatRequirement struct {
+/*****openai****/
+// chatgpt
+type ChatgptRequirement struct {
 	Persona   string `json:"persona"`
 	Token     string `json:"token"`
 	Turnstile struct {
@@ -91,3 +82,180 @@ type ChatgptRequestContent struct {
 	// {"content_type":"image_asset_pointer","asset_pointer":"file-service://file-79q4G4iAyZQpPSNwqUmf7b","size_bytes":179129,"width":1500,"height":1100}
 	Parts []any `json:"parts" binding:"required"`
 }
+
+type ChatgptRequest struct {
+	MessageId       string   `json:"message_id,omitempty"`        //信息ID、标识
+	ParentMessageId string   `json:"parent_message_id,omitempty"` //父信息ID、标识
+	Files           []string `json:"files,omitempty"`             //附件内容base64
+	ConversationId  string   `json:"conversation_id,omitempty"`   //会话ID
+	ArkoseToken     string   `json:"arkose_token,omitempty"`
+	Index           string   `json:"index,omitempty"` //用户定义逻辑ID
+}
+
+// openai api
+type ChatCompletionRequest struct {
+	Messages            []*ChatCompletionMessage `json:"messages"`
+	Model               string                   `json:"model"`
+	Store               bool                     `json:"store,omitempty"`                 //默认false
+	ReasoningEffort     string                   `json:"reasoning_effort,omitempty"`      //默认medium
+	Metadata            map[string]any           `json:"metadata,omitempty"`              //默认nil
+	FrequencyPenalty    float64                  `json:"frequency_penalty,omitempty"`     //默认0
+	LogitBias           map[string]int           `json:"logit_bias,omitempty"`            //默认nil
+	Logprobs            bool                     `json:"logprobs,omitempty"`              //默认false
+	TopLogprobs         int                      `json:"top_logprobs,omitempty"`          //0~20,logprobs设置为true才需设置
+	MaxCompletionTokens int                      `json:"max_completion_tokens,omitempty"` //max_tokens作废
+	N                   int                      `json:"n,omitempty"`                     //默认1
+	Modalities          []string                 `json:"modalities,emitempty"`
+	Prediction          map[string]any           `json:"prediction,omitempty"`
+	Audio               map[string]any           `json:"audio,emitempty"`
+	PresencePenalty     float64                  `json:"presence_penalty,omitempty"` //默认0
+	ResponseFormat      map[string]string        `json:"response_format,omitempty"`
+	Seed                int                      `json:"seed,omitempty"`
+	ServiceTier         string                   `json:"service_tier,omitempty"` //默认auto
+	Stop                any                      `json:"stop,omitempty"`
+	Stream              bool                     `json:"stream,omitempty"`
+	StreamOptions       map[string]bool          `json:"stream_options,omitempty"` //stream设置为true时有效
+	Temperature         float64                  `json:"temperature,omitempty"`    //默认1
+	TopP                float64                  `json:"top_p,omitempty"`          //默认1
+	Tools               []Tool                   `json:"tools,omitempty"`
+	ToolChoice          any                      `json:"tool_choice,omitempty"`
+	ParallelToolCalls   bool                     `json:"parallel_tool_calls,omitempty"` //默认true
+	User                string                   `json:"user,omitempty"`
+
+	Source string `json:"source,omitempty"` //原始json字符串请求
+
+	Provider string `json:"provider,omitempty"` //会话类型,非openai api参数
+
+	// chatgpt专用参数
+	Chatgpt *ChatgptRequest `json:"chatgpt,omitempty"`
+}
+
+func (c *ChatCompletionRequest) ParsePromptText() string {
+	prompt := ""
+	for k := range c.Messages {
+		message := c.Messages[k]
+		if message.Role == "user" {
+			if message.Contents == nil {
+				prompt = message.Content
+			}
+		}
+	}
+	return prompt
+}
+
+type ChatCompletionMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	Name    string `json:"name,omitempty"`
+	// Assistant message
+	Refusal   string            `json:"refusal,omitempty"`
+	Audio     map[string]string `json:"audio,omitempty"`
+	ToolCalls []*ToolCall       `json:"tool_calls,omitempty"`
+	// Tool message
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Contents   []*ChatMessagePart
+}
+
+func (m *ChatCompletionMessage) MarshalJSON() ([]byte, error) {
+	if m.Content != "" && m.Contents != nil {
+		return nil, errContentFieldsMisused
+	}
+	if len(m.Contents) > 0 {
+		msg := struct {
+			Role       string             `json:"role"`
+			Content    string             `json:"-"`
+			Name       string             `json:"name,omitempty"`
+			Refusal    string             `json:"refusal,omitempty"`
+			Audio      map[string]string  `json:"audio,omitempty"`
+			ToolCalls  []*ToolCall        `json:"tool_calls,omitempty"`
+			ToolCallID string             `json:"tool_call_id,omitempty"`
+			Contents   []*ChatMessagePart `json:"content,omitempty"`
+		}(*m)
+		return Json.Marshal(msg)
+	}
+	msg := struct {
+		Role       string             `json:"role"`
+		Content    string             `json:"content"`
+		Name       string             `json:"name,omitempty"`
+		Refusal    string             `json:"refusal,omitempty"`
+		Audio      map[string]string  `json:"audio,omitempty"`
+		ToolCalls  []*ToolCall        `json:"tool_calls,omitempty"`
+		ToolCallID string             `json:"tool_call_id,omitempty"`
+		Contents   []*ChatMessagePart `json:"-"`
+	}(*m)
+	return Json.Marshal(msg)
+}
+
+func (m *ChatCompletionMessage) UnmarshalJSON(bs []byte) error {
+	msg := struct {
+		Role       string            `json:"role"`
+		Content    string            `json:"content"`
+		Name       string            `json:"name,omitempty"`
+		Refusal    string            `json:"refusal,omitempty"`
+		Audio      map[string]string `json:"audio,omitempty"`
+		ToolCalls  []*ToolCall       `json:"tool_calls,omitempty"`
+		ToolCallID string            `json:"tool_call_id,omitempty"`
+		Contents   []*ChatMessagePart
+	}{}
+	if err := Json.Unmarshal(bs, &msg); err == nil {
+		*m = ChatCompletionMessage(msg)
+		return nil
+	}
+	multiMsg := struct {
+		Role       string `json:"role"`
+		Content    string
+		Name       string             `json:"name,omitempty"`
+		Refusal    string             `json:"refusal,omitempty"`
+		Audio      map[string]string  `json:"audio,omitempty"`
+		ToolCalls  []*ToolCall        `json:"tool_calls,omitempty"`
+		ToolCallID string             `json:"tool_call_id,omitempty"`
+		Contents   []*ChatMessagePart `json:"content"`
+	}{}
+	if err := Json.Unmarshal(bs, &multiMsg); err != nil {
+		return err
+	}
+	*m = ChatCompletionMessage(multiMsg)
+	return nil
+}
+
+type ChatMessagePart struct {
+	Type       string                 `json:"type"`
+	Text       string                 `json:"text,omitempty"`
+	ImageUrl   *ChatMessageImageUrl   `json:"image_url,omitempty"`
+	InputAudio *ChatMessageInputAudio `json:"input_audio,omitempty"`
+}
+
+type ChatMessageImageUrl struct {
+	Url    string `json:"url"` //url或base64数据
+	Detail string `json:"detail,omitempty"`
+}
+
+type ChatMessageInputAudio struct {
+	Data   string `json:"data"`   //base64
+	Format string `json:"format"` //格式wav或mp3
+}
+
+type ToolCall struct {
+	ID       string        `json:"id"`
+	Type     string        `json:"type"`
+	Function *FunctionCall `json:"function"`
+}
+
+type FunctionCall struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+}
+
+type Tool struct {
+	Type     string              `json:"type"`
+	Function *FunctionDefinition `json:"function"`
+}
+
+type FunctionDefinition struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Parameters  map[string]string `json:"parameters,omitempty"`
+	Strict      bool              `json:"strict,omitempty"` //默认false
+}
+
+/*****openai end****/
