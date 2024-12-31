@@ -140,14 +140,12 @@ type ChatgptRequest struct {
 	Files           []string `json:"files,omitempty"`             //附件内容base64
 	ConversationId  string   `json:"conversation_id,omitempty"`   //会话ID
 	ArkoseToken     string   `json:"arkose_token,omitempty"`
-	Index           string   `json:"index,omitempty"` //用户定义逻辑ID
 }
 
 type ChatgptResponse struct {
 	MessageId       string `json:"message_id"`                //本次会话信息ID
 	ParentMessageId string `json:"parent_message_id"`         //对话返回的父信息ID,下次请求的parent_message_id用这个
 	ConversationId  string `json:"conversation_id,omitempty"` //会话ID
-	Index           string `json:"index,omitempty"`
 }
 
 // openai api

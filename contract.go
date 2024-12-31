@@ -11,16 +11,12 @@ type AiCommon interface {
 	ChatApi(*ChatCompletionRequest) (*Stream, error)
 	// 通用chat请求转Api返回格式
 	ChatToApi(*ChatCompletionRequest) (*Stream, error)
-	// 原始json数据字符串chat请求转Api返回格式
-	ChatToApiSource(string) (*Stream, error)
-	// api原始json数据字符串转chat请求再转Api返回格式
-	ApiCrossChatToApi(string) (*Stream, error)
+	// api转chat请求再转Api返回格式
+	ApiCrossChatToApi(*ChatCompletionRequest) (*Stream, error)
 	// 通用chat请求(统一请求格式)转成openai api返回格式
-	ChatToOpenai(*ChatCompletionRequest) (*Stream, error)
-	// 原始json数据字符串chat请求转成openai api返回格式
-	ChatToOpenaiSource(string) (*Stream, error)
+	ChatToOpenaiApi(*ChatCompletionRequest) (*Stream, error)
 	// api原始json数据字符串请求转Api返回格式
-	ApiToOpenai(string) (*Stream, error)
+	ApiToOpenaiApi(*ChatCompletionRequest) (*Stream, error)
 	// api原始json数据字符串转chat请求再转openai api返回格式
-	ApiCrossChatToOpenai(string) (*Stream, error)
+	ApiCrossChatToOpenaiApi(*ChatCompletionRequest) (*Stream, error)
 }
