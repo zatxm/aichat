@@ -4,7 +4,7 @@ type AiCommon interface {
 	// 设置代理
 	SetProxy(string)
 	// 设置鉴权token等
-	SetAuth(string)
+	SetAuth(*Auth)
 	// 通用chat请求,stream
 	Chat(*ChatCompletionRequest) (*Stream, error)
 	// 原始api请求

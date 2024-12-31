@@ -1,5 +1,6 @@
 package aichat
 
+// 返回数据格式
 type EventData struct {
 	Name string
 	Data string
@@ -9,6 +10,14 @@ type Stream struct {
 	Data   string //一般是错误之间返回的信息
 	Events chan *EventData
 	Closed chan struct{}
+}
+
+// auth相关权限
+type Auth struct {
+	Token string //大多数会用到
+
+	// claude相关
+	organizationId string
 }
 
 /*****openai****/

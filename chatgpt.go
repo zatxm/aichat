@@ -18,19 +18,19 @@ import (
 )
 
 type chatgpt struct {
-	token     string
+	auth      *Auth
 	proxyUrl  string
 	uuid      string
 	startTime time.Time
 	client    *mreq.Client
 }
 
-func NewChatgpt(token, proxyUrl string) AiCommon {
+func NewChatgpt(auth *Auth, proxyUrl string) AiCommon {
 	client := mreq.C().SetUserAgent(userAgent).ImpersonateChrome()
 	if proxyUrl != "" {
 		client.SetProxyURL(proxyUrl)
 	}
-	return &chatgpt{token: token, proxyUrl: proxyUrl, client: client}
+	return &chatgpt{auth: auth, proxyUrl: proxyUrl, client: client}
 }
 
 func (g *chatgpt) SetProxy(proxyUrl string) {
@@ -40,8 +40,8 @@ func (g *chatgpt) SetProxy(proxyUrl string) {
 	}
 }
 
-func (g *chatgpt) SetAuth(token string) {
-	g.token = token
+func (g *chatgpt) SetAuth(auth *Auth) {
+	g.auth = auth
 }
 
 func (g *chatgpt) Chat(rc *ChatCompletionRequest) (*Stream, error) {
@@ -74,7 +74,7 @@ func (g *chatgpt) ChatApi(rc *ChatCompletionRequest) (*Stream, error) {
 	// 请求通信
 	res, err := g.client.R().
 		SetHeader("content-type", contentTypeJson).
-		SetHeader("authorization", "Bearer "+g.token).
+		SetHeader("authorization", "Bearer "+g.auth.Token).
 		SetBodyBytes(rb).Post(openaiApiUrl + "/chat/completions")
 	defer res.Body.Close()
 
@@ -209,11 +209,11 @@ func (g *chatgpt) goChatRequirement(requireProof string) (*ChatgptRequirement, *
 		SetHeader("Oai-Device-Id", g.uuid).
 		SetHeader("Oai-Language", "en-US")
 	var chatRequirementUrl string
-	if g.token == "" {
+	if g.auth.Token == "" {
 		chatRequirementUrl = "https://chatgpt.com/backend-anon/sentinel/chat-requirements"
 	} else {
 		chatRequirementUrl = "https://chatgpt.com/backend-api/sentinel/chat-requirements"
-		rq.SetBearerAuthToken(g.token)
+		rq.SetBearerAuthToken(g.auth.Token)
 	}
 	jsonBody, _ := Json.Marshal(map[string]string{"p": requireProof})
 	resp, err := rq.SetBodyBytes(jsonBody).Post(chatRequirementUrl)
@@ -226,7 +226,7 @@ func (g *chatgpt) goChatRequirement(requireProof string) (*ChatgptRequirement, *
 	if err != nil {
 		return nil, rq, err
 	}
-	if g.token == "" && require.ForceLogin {
+	if g.auth.Token == "" && require.ForceLogin {
 		return nil, rq, errors.New("Must login")
 	}
 	return &require, rq, nil
@@ -239,7 +239,7 @@ func (g *chatgpt) doChatgptRequest(ccr *ChatgptCompletionRequest, rq *mreq.Reque
 	}
 	/*****通信对话*****/
 	var chatUrl string
-	if g.token == "" {
+	if g.auth.Token == "" {
 		chatUrl = "https://chatgpt.com/backend-anon/conversation"
 	} else {
 		chatUrl = "https://chatgpt.com/backend-api/conversation"
