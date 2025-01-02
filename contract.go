@@ -5,7 +5,7 @@ type AiCommon interface {
 	SetProxy(string)
 	// 设置鉴权token等
 	SetAuth(*Auth)
-	// 通用chat请求,stream
+	// chat请求,stream
 	Chat(*ChatCompletionRequest) (*Stream, error)
 	// 原始api请求
 	ChatApi(*ChatCompletionRequest) (*Stream, error)
@@ -19,4 +19,6 @@ type AiCommon interface {
 	ApiToOpenaiApi(*ChatCompletionRequest) (*Stream, error)
 	// api原始json数据字符串转chat请求再转openai api返回格式
 	ApiCrossChatToOpenaiApi(*ChatCompletionRequest) (*Stream, error)
+	// openai api格式请求通过web转api格式返回
+	CommonChatToOpenaiApi(*ChatCompletionRequest) (*Stream, error)
 }

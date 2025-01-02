@@ -10,6 +10,9 @@ import (
 
 const (
 	userAgent       = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+	acceptEncoding  = "gzip, deflate, br, zstd"
+	acceptStream    = "text/event-stream"
+	contentTypeAll  = "*/*"
 	contentTypeJson = "application/json"
 )
 
@@ -384,4 +387,8 @@ var (
 		"__STATSIG_RERENDER_OVERRIDE__",
 		"_oaiHandleSessionExpired"}
 	openaiApiUrl = "https://api.openai.com/v1"
+
+	// claude
+	anthropicVersion = "2023-06-01"
+	anthropicApiUrl  = "https://api.anthropic.com"
 )

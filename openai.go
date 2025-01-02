@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"io"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -17,69 +18,59 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-type chatgpt struct {
-	auth      *Auth
-	proxyUrl  string
+type openai struct {
+	config    *Config
 	uuid      string
 	startTime time.Time
 	client    *mreq.Client
 }
 
-func NewChatgpt(auth *Auth, proxyUrl string) AiCommon {
+func NewChatgpt(cfg *Config) AiCommon {
 	client := mreq.C().SetUserAgent(userAgent).ImpersonateChrome()
+	if cfg.ProxyUrl != "" {
+		client.SetProxyURL(cfg.ProxyUrl)
+	}
+	if cfg.Auth == nil {
+		cfg.Auth = &Auth{}
+	}
+	return &openai{config: cfg, client: client}
+}
+
+func (o *openai) SetProxy(proxyUrl string) {
+	o.config.ProxyUrl = proxyUrl
 	if proxyUrl != "" {
-		client.SetProxyURL(proxyUrl)
-	}
-	return &chatgpt{auth: auth, proxyUrl: proxyUrl, client: client}
-}
-
-func (g *chatgpt) SetProxy(proxyUrl string) {
-	g.proxyUrl = proxyUrl
-	if g.proxyUrl != "" {
-		g.client.SetProxyURL(proxyUrl)
+		o.client.SetProxyURL(proxyUrl)
 	}
 }
 
-func (g *chatgpt) SetAuth(auth *Auth) {
-	g.auth = auth
+func (o *openai) SetAuth(auth *Auth) {
+	o.config.Auth = auth
 }
 
-func (g *chatgpt) Chat(rc *ChatCompletionRequest) (*Stream, error) {
-	if rc.Source != "" {
-		err := Json.UnmarshalFromString(rc.Source, &rc)
-		if err != nil {
-			return nil, err
-		}
-	}
-	chatgptReq, err := g.generateChatgptCompletionRequest(rc)
+func (o *openai) Chat(rc *ChatCompletionRequest) (*Stream, error) {
+	ccr, err := o.toChatgptCompletionRequest(rc)
 	if err != nil {
 		return nil, err
 	}
-	return g.goChatgpt(chatgptReq)
+	return o.goChatgpt(ccr)
 }
 
-func (g *chatgpt) ChatApi(rc *ChatCompletionRequest) (*Stream, error) {
-	if rc.Source != "" {
-		err := Json.UnmarshalFromString(rc.Source, &rc)
-		if err != nil {
-			return nil, err
-		}
-	}
-	rc.Stream = true
-	rb, err := Json.Marshal(rc)
+func (o *openai) ChatApi(rc *ChatCompletionRequest) (*Stream, error) {
+	occr, err := o.toOpenaiChatCompletionRequest(rc)
+	rb, err := Json.Marshal(occr)
 	if err != nil {
 		return nil, err
 	}
 
 	// 请求通信
-	res, err := g.client.R().
+	res, err := o.client.R().
 		SetHeader("content-type", contentTypeJson).
-		SetHeader("authorization", "Bearer "+g.auth.Token).
+		SetHeader("authorization", "Bearer "+o.config.Auth.Token).
 		SetBodyBytes(rb).Post(openaiApiUrl + "/chat/completions")
 	defer res.Body.Close()
 
-	// 处理错误
-	if res.StatusCode >= 400 {
+	// 处理错误、或非流
+	if res.StatusCode >= 400 || !occr.Stream {
 		b, err := readAllToString(res.Body)
 		if err != nil {
 			return nil, err
@@ -87,81 +78,102 @@ func (g *chatgpt) ChatApi(rc *ChatCompletionRequest) (*Stream, error) {
 		return &Stream{Data: b}, nil
 	}
 
-	// 处理返回数据
-	stream := &Stream{
-		Events: make(chan *EventData),
-		Closed: make(chan struct{}),
-	}
-	go func() {
-		reader := bufio.NewReader(res.Body)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-			if line == "\n" {
-				continue
-			}
-			stream.Events <- &EventData{Name: "", Data: line}
-		}
-	}()
-	return stream, nil
+	return originStream(res.Body)
 }
 
-func (g *chatgpt) ChatToApi(rc *ChatCompletionRequest) (*Stream, error) {
-	if rc.Source != "" {
-		err := Json.UnmarshalFromString(rc.Source, &rc)
-		if err != nil {
-			return nil, err
-		}
-	}
-	chatgptReq, err := g.generateChatgptCompletionRequest(rc)
+func (o *openai) ChatToApi(rc *ChatCompletionRequest) (*Stream, error) {
+	ccr, err := o.toChatgptCompletionRequest(rc)
 	if err != nil {
 		return nil, err
 	}
-	return g.goChatgptToApi(chatgptReq)
+	return o.goChatgptToApi(ccr)
 }
 
-func (g *chatgpt) ApiCrossChatToApi(rc *ChatCompletionRequest) (*Stream, error) {
-	return g.ChatToApi(rc)
+func (o *openai) ApiCrossChatToApi(rc *ChatCompletionRequest) (*Stream, error) {
+	ccr, err := o.apiToChatgptCompletionRequest(rc)
+	if err != nil {
+		return nil, err
+	}
+	return o.goChatgptToApi(ccr)
 }
 
-func (g *chatgpt) ChatToOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
-	return g.ChatToApi(rc)
+func (o *openai) ChatToOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
+	return o.ChatToApi(rc)
 }
 
-func (g *chatgpt) ApiToOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
-	return g.ChatApi(rc)
+func (o *openai) ApiToOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
+	return o.ChatApi(rc)
 }
 
-func (g *chatgpt) ApiCrossChatToOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
-	return g.ChatToApi(rc)
+func (o *openai) ApiCrossChatToOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
+	return o.ApiCrossChatToApi(rc)
 }
 
-// 通用请求转成chatgpt请求
-func (g *chatgpt) generateChatgptCompletionRequest(rc *ChatCompletionRequest) (*ChatgptCompletionRequest, error) {
-	msg := rc.ParsePromptText()
+func (o *openai) CommonChatToOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
+	return o.ApiCrossChatToApi(rc)
+}
+
+func (o *openai) toChatgptCompletionRequest(rc *ChatCompletionRequest) (*ChatgptCompletionRequest, error) {
+	if rc.Source == "" && rc.Chatgpt == nil {
+		return nil, errors.New("params error")
+	}
+	ccr := &ChatgptCompletionRequest{}
+	if rc.Source != "" {
+		err := Json.UnmarshalFromString(rc.Source, &ccr)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ccr = rc.Chatgpt
+	}
+	return ccr, nil
+}
+
+func (o *openai) toOpenaiChatCompletionRequest(rc *ChatCompletionRequest) (*OpenaiChatCompletionRequest, error) {
+	if rc.Source == "" && rc.Openai == nil {
+		return nil, errors.New("params error")
+	}
+	occr := &OpenaiChatCompletionRequest{}
+	if rc.Source != "" {
+		err := Json.UnmarshalFromString(rc.Source, &occr)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		occr = rc.Openai
+	}
+	return occr, nil
+}
+
+// api通用请求转成chatgpt请求
+func (o *openai) apiToChatgptCompletionRequest(rc *ChatCompletionRequest) (*ChatgptCompletionRequest, error) {
+	occr, err := o.toOpenaiChatCompletionRequest(rc)
+	if err != nil {
+		return nil, err
+	}
+
+	msg := occr.ParsePromptText()
 	if msg == "" {
 		return nil, errors.New("request error:message empty")
 	}
 	// 通信请求体
-	if rc.Chatgpt == nil {
-		rc.Chatgpt = &ChatgptRequest{}
+	if occr.ChatgptExt == nil {
+		occr.ChatgptExt = &ChatgptRequest{}
 	}
-	msgId := rc.Chatgpt.MessageId //请求信息ID
+	msgId := occr.ChatgptExt.MessageId //请求信息ID
 	if msgId == "" {
 		msgId = uuid.NewString()
 	}
-	parentMsgId := rc.Chatgpt.ParentMessageId //请求父信息ID
+	parentMsgId := occr.ChatgptExt.ParentMessageId //请求父信息ID
 	if parentMsgId == "" {
 		parentMsgId = uuid.NewString()
 	}
-	model := rc.Model
+	model := occr.Model
 	if model == "" {
 		model = "auto"
 	}
-	var reqMsg []*ChatgptRequestMessage
-	reqMsg = append(reqMsg, &ChatgptRequestMessage{
+	var ccrMsg []*ChatgptRequestMessage
+	ccrMsg = append(ccrMsg, &ChatgptRequestMessage{
 		ID:     msgId,
 		Author: &ChatgptAuthor{Role: "user"},
 		Content: &ChatgptContent{
@@ -170,7 +182,7 @@ func (g *chatgpt) generateChatgptCompletionRequest(rc *ChatCompletionRequest) (*
 		CreateTime: nowTimePay(),
 		Metadata:   map[string]any{"custom_symbol_offsets": []any{}},
 	})
-	chatgptReq := &ChatgptCompletionRequest{
+	ccr := &ChatgptCompletionRequest{
 		Action:                           "next",
 		ClientContextualInfo:             newChatgptClientContextualInfo(),
 		ConversationMode:                 map[string]string{"kind": "primary_assistant"},
@@ -179,7 +191,7 @@ func (g *chatgpt) generateChatgptCompletionRequest(rc *ChatCompletionRequest) (*
 		ForceParagenModelSlug:            "",
 		ForceRateLimit:                   false,
 		HistoryAndTrainingDisabled:       false,
-		Messages:                         reqMsg,
+		Messages:                         ccrMsg,
 		Model:                            model,
 		ParagenCotSummaryDisplayOverride: "allow",
 		ParagenStreamTypeOverride:        nil,
@@ -192,28 +204,28 @@ func (g *chatgpt) generateChatgptCompletionRequest(rc *ChatCompletionRequest) (*
 		// Timezone:                         "Asia/Shanghai",
 		TimezoneOffsetMin:  -480,
 		WebsocketRequestId: uuid.NewString()}
-	if rc.Chatgpt.ConversationId != "" {
-		chatgptReq.ConversationId = rc.Chatgpt.ConversationId //会话ID
+	if occr.ChatgptExt.ConversationId != "" {
+		ccr.ConversationId = occr.ChatgptExt.ConversationId //会话ID
 	}
-	return chatgptReq, nil
+	return ccr, nil
 }
 
-func (g *chatgpt) goChatRequirement(requireProof string) (*ChatgptRequirement, *mreq.Request, error) {
-	if g.uuid == "" {
-		g.uuid = uuid.NewString()
-		g.client.SetCommonCookies(&http.Cookie{Name: "oai-did", Value: g.uuid, Path: "/", Domain: hostURL.Host})
+func (o *openai) goChatRequirement(requireProof string) (*ChatgptRequirement, *mreq.Request, error) {
+	if o.uuid == "" {
+		o.uuid = uuid.NewString()
+		o.client.SetCommonCookies(&http.Cookie{Name: "oai-did", Value: o.uuid, Path: "/", Domain: hostURL.Host})
 	}
-	rq := g.client.R().
+	rq := o.client.R().
 		SetHeader("accept", "*/*").
 		SetHeader("content-type", contentTypeJson).
-		SetHeader("Oai-Device-Id", g.uuid).
+		SetHeader("Oai-Device-Id", o.uuid).
 		SetHeader("Oai-Language", "en-US")
 	var chatRequirementUrl string
-	if g.auth.Token == "" {
+	if o.config.Auth.Token == "" {
 		chatRequirementUrl = "https://chatgpt.com/backend-anon/sentinel/chat-requirements"
 	} else {
 		chatRequirementUrl = "https://chatgpt.com/backend-api/sentinel/chat-requirements"
-		rq.SetBearerAuthToken(g.auth.Token)
+		rq.SetBearerAuthToken(o.config.Auth.Token)
 	}
 	jsonBody, _ := Json.Marshal(map[string]string{"p": requireProof})
 	resp, err := rq.SetBodyBytes(jsonBody).Post(chatRequirementUrl)
@@ -226,20 +238,20 @@ func (g *chatgpt) goChatRequirement(requireProof string) (*ChatgptRequirement, *
 	if err != nil {
 		return nil, rq, err
 	}
-	if g.auth.Token == "" && require.ForceLogin {
+	if o.config.Auth.Token == "" && require.ForceLogin {
 		return nil, rq, errors.New("Must login")
 	}
 	return &require, rq, nil
 }
 
-func (g *chatgpt) doChatgptRequest(ccr *ChatgptCompletionRequest, rq *mreq.Request, require *ChatgptRequirement) (*mreq.Response, error) {
+func (o *openai) doChatgptRequest(ccr *ChatgptCompletionRequest, rq *mreq.Request, require *ChatgptRequirement) (*mreq.Response, error) {
 	reqByte, err := Json.Marshal(ccr)
 	if err != nil {
 		return nil, err
 	}
 	/*****通信对话*****/
 	var chatUrl string
-	if g.auth.Token == "" {
+	if o.config.Auth.Token == "" {
 		chatUrl = "https://chatgpt.com/backend-anon/conversation"
 	} else {
 		chatUrl = "https://chatgpt.com/backend-api/conversation"
@@ -247,7 +259,7 @@ func (g *chatgpt) doChatgptRequest(ccr *ChatgptCompletionRequest, rq *mreq.Reque
 	rq.SetHeader("accept", "text/event-stream").
 		SetHeader("openai-sentinel-chat-requirements-token", require.Token)
 	if require.Proofofwork.Required {
-		proofToken := g.parseProofToken(require)
+		proofToken := o.parseProofToken(require)
 		rq.SetHeader("openai-sentinel-proof-token", proofToken)
 	}
 	if require.Turnstile.Required {
@@ -260,13 +272,13 @@ func (g *chatgpt) doChatgptRequest(ccr *ChatgptCompletionRequest, rq *mreq.Reque
 		Post(chatUrl)
 }
 
-func (g *chatgpt) goChatgpt(ccr *ChatgptCompletionRequest) (*Stream, error) {
-	g.startTime = time.Now()
-	requireProof := "gAAAAAC" + g.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
-	require, rq, err := g.goChatRequirement(requireProof)
+func (o *openai) goChatgpt(ccr *ChatgptCompletionRequest) (*Stream, error) {
+	o.startTime = time.Now()
+	requireProof := "gAAAAAC" + o.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
+	require, rq, err := o.goChatRequirement(requireProof)
 
 	// 通信对话
-	resp, err := g.doChatgptRequest(ccr, rq, require)
+	resp, err := o.doChatgptRequest(ccr, rq, require)
 	if err != nil {
 		return nil, err
 	}
@@ -275,35 +287,17 @@ func (g *chatgpt) goChatgpt(ccr *ChatgptCompletionRequest) (*Stream, error) {
 		return nil, errors.New("request chat return http status error")
 	}
 
-	// 处理返回
-	stream := &Stream{
-		Events: make(chan *EventData),
-		Closed: make(chan struct{}),
-	}
-	go func() {
-		reader := bufio.NewReader(resp.Body)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-			if line == "\n" {
-				continue
-			}
-			stream.Events <- &EventData{Name: "", Data: line}
-		}
-	}()
-	return stream, nil
+	return originStream(resp.Body)
 }
 
 // chatgpt转api返回
-func (g *chatgpt) goChatgptToApi(ccr *ChatgptCompletionRequest) (*Stream, error) {
-	g.startTime = time.Now()
-	requireProof := "gAAAAAC" + g.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
-	require, rq, err := g.goChatRequirement(requireProof)
+func (o *openai) goChatgptToApi(ccr *ChatgptCompletionRequest) (*Stream, error) {
+	o.startTime = time.Now()
+	requireProof := "gAAAAAC" + o.generateAnswer(strconv.FormatFloat(rand.Float64(), 'f', -1, 64), "0")
+	require, rq, err := o.goChatRequirement(requireProof)
 
 	// 通信对话
-	resp, err := g.doChatgptRequest(ccr, rq, require)
+	resp, err := o.doChatgptRequest(ccr, rq, require)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +355,7 @@ func (g *chatgpt) goChatgptToApi(ccr *ChatgptCompletionRequest) (*Stream, error)
 							},
 						}
 						outJson, _ := Json.MarshalToString(outRes)
-						stream.Events <- &EventData{Name: "", Data: outJson + "\n\n"}
+						stream.Events <- &EventData{Name: "", Data: "data: " + outJson + "\n\n"}
 					case map[string]any:
 						var rMsg ChatgptCompletionResponse
 						err := Json.UnmarshalFromString(raw, &rMsg)
@@ -384,8 +378,8 @@ func (g *chatgpt) goChatgptToApi(ccr *ChatgptCompletionRequest) (*Stream, error)
 	return stream, nil
 }
 
-func (g *chatgpt) generateAnswer(seed string, diff string) string {
-	g.parseDataBuildId()
+func (o *openai) generateAnswer(seed string, diff string) string {
+	o.parseDataBuildId()
 
 	rand.New(rand.NewSource(time.Now().UnixNano()))
 	core := cores[rand.Intn(3)]
@@ -442,13 +436,13 @@ func (g *chatgpt) generateAnswer(seed string, diff string) string {
 	return "wQ8Lk5FbGpA2NcR9dShT6gYjU7VxZ4D" + base64.StdEncoding.EncodeToString([]byte(`"`+seed+`"`))
 }
 
-func (g *chatgpt) parseProofToken(r *ChatgptRequirement) string {
-	proof := g.generateAnswer(r.Proofofwork.Seed, r.Proofofwork.Difficulty)
+func (o *openai) parseProofToken(r *ChatgptRequirement) string {
+	proof := o.generateAnswer(r.Proofofwork.Seed, r.Proofofwork.Difficulty)
 	return "gAAAAAB" + proof
 }
 
-func (g *chatgpt) parseDataBuildId() {
-	resp, err := g.client.R().SetHeader("accept", "*/*").Get("https://chatgpt.com/?oai-dm=1")
+func (o *openai) parseDataBuildId() {
+	resp, err := o.client.R().SetHeader("accept", "*/*").Get("https://chatgpt.com/?oai-dm=1")
 	if err != nil {
 		return
 	}
@@ -459,4 +453,26 @@ func (g *chatgpt) parseDataBuildId() {
 			dataBuildId = id
 		}
 	})
+}
+
+// 处理原始stream流
+func originStream(ir io.ReadCloser) (*Stream, error) {
+	stream := &Stream{
+		Events: make(chan *EventData),
+		Closed: make(chan struct{}),
+	}
+	go func() {
+		reader := bufio.NewReader(ir)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if line == "\n" {
+				continue
+			}
+			stream.Events <- &EventData{Name: "", Data: line}
+		}
+	}()
+	return stream, nil
 }
