@@ -25,7 +25,7 @@ type openai struct {
 	client    *mreq.Client
 }
 
-func NewChatgpt(cfg *Config) AiCommon {
+func NewOpenai(cfg *Config) AiCommon {
 	client := mreq.C().SetUserAgent(userAgent).ImpersonateChrome()
 	if cfg.ProxyUrl != "" {
 		client.SetProxyURL(cfg.ProxyUrl)
