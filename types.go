@@ -432,9 +432,9 @@ type ClaudeChatRequest struct {
 	ParentMessageUuid  string                     `json:"parent_message_uuid"` //初始00000000-0000-4000-8000-000000000000
 	Timezone           string                     `json:"timezone"`
 	PersonalizedStyles []*ClaudePersonalizedStyle `json:"personalized_styles"`
-	Attachments        []any                      `json:"attachments"`
-	Files              []any                      `json:"files"`
-	SyncSources        []any                      `json:"sync_sources"`
+	Attachments        []any                      `json:"attachments,omitempty"`
+	Files              []any                      `json:"files,omitempty"`
+	SyncSources        []any                      `json:"sync_sources,omitempty"`
 	RenderingMode      string                     `json:"rendering_mode"`            //可能取值messages
 	ConversationId     string                     `json:"conversation_id,omitempty"` //会话ID
 }

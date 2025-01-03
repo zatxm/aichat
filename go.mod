@@ -1,9 +1,10 @@
-module github.com/zatxm/aichat
+module openai-chat-test/vendor/github.com/zatxm/aichat
 
 go 1.23.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.1
+	github.com/andybalholm/brotli v1.1.1
 	github.com/google/uuid v1.6.0
 	github.com/imroc/req/v3 v3.49.1
 	github.com/json-iterator/go v1.1.12
@@ -11,7 +12,6 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/cloudflare/circl v1.5.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect

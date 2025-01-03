@@ -13,7 +13,7 @@ const (
 	acceptEncoding  = "gzip, deflate, br, zstd"
 	acceptStream    = "text/event-stream"
 	contentTypeAll  = "*/*"
-	contentTypeJson = "application/json"
+	contentTypeJson = "application/json; charset=utf-8"
 )
 
 var (

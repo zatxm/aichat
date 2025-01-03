@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
 	mreq "github.com/imroc/req/v3"
 	"golang.org/x/crypto/sha3"
@@ -78,7 +79,7 @@ func (o *openai) ChatApi(rc *ChatCompletionRequest) (*Stream, error) {
 		return &Stream{Data: b}, nil
 	}
 
-	return originStream(res.Body)
+	return originStream(res)
 }
 
 func (o *openai) ChatToApi(rc *ChatCompletionRequest) (*Stream, error) {
@@ -287,7 +288,7 @@ func (o *openai) goChatgpt(ccr *ChatgptCompletionRequest) (*Stream, error) {
 		return nil, errors.New("request chat return http status error")
 	}
 
-	return originStream(resp.Body)
+	return originStream(resp)
 }
 
 // chatgpt转api返回
@@ -303,7 +304,7 @@ func (o *openai) goChatgptToApi(ccr *ChatgptCompletionRequest) (*Stream, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, errors.New("request chat return http status error")
+		return nil, errors.New("request chat return http status error:" + resp.Status)
 	}
 
 	// 处理返回
@@ -318,62 +319,63 @@ func (o *openai) goChatgptToApi(ccr *ChatgptCompletionRequest) (*Stream, error) 
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
-				break
+				close(stream.Closed)
+				return
 			}
-			if line == "\n" {
-				continue
-			}
-			raw := line[6:]
-			if !strings.HasPrefix(raw, "[DONE]") {
-				raw = strings.TrimSuffix(raw, "\n")
-				chatRes := map[string]any{}
-				err := Json.UnmarshalFromString(raw, &chatRes)
-				if err != nil {
-					continue
-				}
-				if _, ok := chatRes["v"]; ok {
-					switch chatRes["v"].(type) {
-					case string:
-						var choices []*ChatCompletionChoice
-						choices = append(choices, &ChatCompletionChoice{
-							Delta: &ChatCompletionMessage{
-								Role:    "assistant",
-								Content: chatRes["v"].(string),
-							},
-							Index: 0,
-						})
-						outRes := &ChatCompletionResponse{
-							ID:      resMsgId,
-							Choices: choices,
-							Created: createdAt,
-							Model:   model,
-							Object:  "chat.completion.chunk",
-							Chatgpt: &ChatgptResponse{
-								MessageId:       resMsgId,
-								ParentMessageId: resMsgParentId,
-								ConversationId:  conversationId,
-							},
-						}
-						outJson, _ := Json.MarshalToString(outRes)
-						stream.Events <- &EventData{Name: "", Data: "data: " + outJson + "\n\n"}
-					case map[string]any:
-						var rMsg ChatgptCompletionResponse
-						err := Json.UnmarshalFromString(raw, &rMsg)
-						if err != nil {
-							continue
-						}
-						if rMsg.V.Message.Author.Role == "assistant" {
-							conversationId = rMsg.V.ConversationId
-							resMsgId = rMsg.V.Message.Metadata.ParentId
-							resMsgParentId = rMsg.V.Message.ID
-							model = rMsg.V.Message.Metadata.ModelSlug
-							createdAt = int64(rMsg.V.Message.CreateTime)
+			if strings.HasPrefix(line, "data:") {
+				raw := line[6:]
+				if !strings.HasPrefix(raw, "[DONE]") {
+					raw = strings.TrimSuffix(raw, "\n")
+					chatRes := map[string]any{}
+					err := Json.UnmarshalFromString(raw, &chatRes)
+					if err != nil {
+						continue
+					}
+					if _, ok := chatRes["v"]; ok {
+						switch chatRes["v"].(type) {
+						case string:
+							var choices []*ChatCompletionChoice
+							choices = append(choices, &ChatCompletionChoice{
+								Delta: &ChatCompletionMessage{
+									Role:    "assistant",
+									Content: chatRes["v"].(string),
+								},
+								Index: 0,
+							})
+							outRes := &ChatCompletionResponse{
+								ID:      resMsgId,
+								Choices: choices,
+								Created: createdAt,
+								Model:   model,
+								Object:  "chat.completion.chunk",
+								Chatgpt: &ChatgptResponse{
+									MessageId:       resMsgId,
+									ParentMessageId: resMsgParentId,
+									ConversationId:  conversationId,
+								},
+							}
+							outJson, _ := Json.MarshalToString(outRes)
+							stream.Events <- &EventData{Name: "", Data: "data: " + outJson + "\n\n"}
+						case map[string]any:
+							var rMsg ChatgptCompletionResponse
+							err := Json.UnmarshalFromString(raw, &rMsg)
+							if err != nil {
+								continue
+							}
+							if rMsg.V.Message.Author.Role == "assistant" {
+								conversationId = rMsg.V.ConversationId
+								resMsgId = rMsg.V.Message.Metadata.ParentId
+								resMsgParentId = rMsg.V.Message.ID
+								model = rMsg.V.Message.Metadata.ModelSlug
+								createdAt = int64(rMsg.V.Message.CreateTime)
+							}
 						}
 					}
+				} else {
+					stream.Events <- &EventData{Name: "", Data: "data: [DONE]\n\n"}
 				}
 			}
 		}
-		stream.Events <- &EventData{Name: "", Data: "data: [DONE]\n\n"}
 	}()
 	return stream, nil
 }
@@ -456,22 +458,29 @@ func (o *openai) parseDataBuildId() {
 }
 
 // 处理原始stream流
-func originStream(ir io.ReadCloser) (*Stream, error) {
+func originStream(resp *mreq.Response) (*Stream, error) {
 	stream := &Stream{
 		Events: make(chan *EventData),
 		Closed: make(chan struct{}),
 	}
+
 	go func() {
+		var ir io.Reader
+		if resp.Header.Get("Content-Encoding") == "br" {
+			ir = brotli.NewReader(resp.Body)
+		} else {
+			ir = resp.Body
+		}
 		reader := bufio.NewReader(ir)
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
+				close(stream.Closed)
 				return
 			}
-			if line == "\n" {
-				continue
+			if strings.HasPrefix(line, "data:") {
+				stream.Events <- &EventData{Name: "", Data: line}
 			}
-			stream.Events <- &EventData{Name: "", Data: line}
 		}
 	}()
 	return stream, nil
