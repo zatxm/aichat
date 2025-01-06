@@ -416,9 +416,10 @@ type ClaudeConversation struct {
 
 type ClaudeExtRequest struct {
 	ParentMessageId string `json:"parent_message_id,omitempty"` //父信息ID、标识
-	Attachments     []any  `json:"attachments"`                 //附件
-	Files           []any  `json:"files"`                       //文件
+	Attachments     []any  `json:"attachments,omitempty"`       //附件
+	Files           []any  `json:"files,omitempty"`             //文件
 	ConversationId  string `json:"conversation_id,omitempty"`   //会话ID
+	OrganizationId  string `json:"organization_id,omitempty"`   //组织ID
 }
 
 type ClaudeExtResponse struct {
@@ -435,8 +436,9 @@ type ClaudeChatRequest struct {
 	Attachments        []any                      `json:"attachments,omitempty"`
 	Files              []any                      `json:"files,omitempty"`
 	SyncSources        []any                      `json:"sync_sources,omitempty"`
-	RenderingMode      string                     `json:"rendering_mode"`            //可能取值messages
-	ConversationId     string                     `json:"conversation_id,omitempty"` //会话ID
+	RenderingMode      string                     `json:"rendering_mode"` //可能取值messages
+
+	ClaudeExt *ClaudeExtRequest `json:"claude,omitempty"` //自定义额外请求
 }
 
 // 页面请求返回

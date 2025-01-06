@@ -10,7 +10,31 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
 	mreq "github.com/imroc/req/v3"
+	"go.uber.org/zap"
 )
+
+type incomparable [0]func()
+
+type brReader struct {
+	_    incomparable
+	body io.ReadCloser
+	zr   *brotli.Reader
+	zerr error
+}
+
+func (br *brReader) Read(p []byte) (n int, err error) {
+	if br.zerr != nil {
+		return 0, br.zerr
+	}
+	if br.zr == nil {
+		br.zr = brotli.NewReader(br.body)
+	}
+	return br.zr.Read(p)
+}
+
+func (br *brReader) Close() error {
+	return br.body.Close()
+}
 
 type claude struct {
 	config *Config
@@ -22,6 +46,20 @@ func NewClaude(cfg *Config) AiCommon {
 	if cfg.ProxyUrl != "" {
 		client.SetProxyURL(cfg.ProxyUrl)
 	}
+	// 返回br解码
+	client.OnAfterResponse(func(client *mreq.Client, resp *mreq.Response) error {
+		if resp.Err != nil {
+			return nil
+		}
+
+		if resp.Header.Get("Content-Encoding") == "br" {
+			resp.Body = &brReader{
+				body: resp.Body,
+			}
+		}
+
+		return nil
+	})
 	if cfg.Auth == nil {
 		cfg.Auth = &Auth{}
 	}
@@ -161,7 +199,9 @@ func (c *claude) apiToClaudeChatRequest(rc *ChatCompletionRequest) (*ClaudeChatR
 		Timezone:           "Asia/Shanghai",
 		PersonalizedStyles: c.generateClaudePersonalizedStyle(),
 		RenderingMode:      "messages",
-		ConversationId:     arc.ClaudeExt.ConversationId,
+		ClaudeExt: &ClaudeExtRequest{
+			ConversationId: arc.ClaudeExt.ConversationId,
+			OrganizationId: arc.ClaudeExt.OrganizationId},
 	}
 	return ccr, nil
 }
@@ -205,7 +245,7 @@ func (c *claude) doApiOrigin(rc *ChatCompletionRequest) (*Stream, error) {
 
 	// 处理返回
 	if !acr.Stream {
-		b, err := brReadAllToString(resp)
+		b, err := readAllToString(resp.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +272,7 @@ func (c *claude) doApiOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
 	// 处理返回
 	if !acr.Stream {
 		var acrRes AnthropicChatResponse
-		err := brDecode(resp, &acrRes)
+		err := Json.NewDecoder(resp.Body).Decode(&acrRes)
 		if err != nil {
 			return nil, err
 		}
@@ -302,18 +342,25 @@ func (c *claude) doApiOpenaiApi(rc *ChatCompletionRequest) (*Stream, error) {
 }
 
 func (c *claude) doChatWebRequest(ccr *ClaudeChatRequest) (*mreq.Response, error, string) {
+	conversationId, organizationId := "", ""
+	if ccr.ClaudeExt != nil {
+		conversationId = ccr.ClaudeExt.ConversationId
+		organizationId = ccr.ClaudeExt.OrganizationId
+		ccr.ClaudeExt = nil
+	}
 	ccrByte, err := Json.Marshal(ccr)
 	if err != nil {
 		return nil, err, ""
 	}
-	organizationId, err := c.generateOrganizationId(false)
-	if err != nil {
-		return nil, err, ""
-	}
 	if organizationId == "" {
-		return nil, errors.New("request chat parse organization_id error"), ""
+		organizationId, err = c.generateOrganizationId(false)
+		if err != nil {
+			return nil, err, ""
+		}
+		if organizationId == "" {
+			return nil, errors.New("request chat parse organization_id error"), ""
+		}
 	}
-	conversationId := ccr.ConversationId
 	if conversationId == "" {
 		// 新会话
 		createConversationUrl := "https://claude.ai/api/organizations/" + organizationId + "/chat_conversations"
@@ -332,7 +379,7 @@ func (c *claude) doChatWebRequest(ccr *ClaudeChatRequest) (*mreq.Response, error
 			Post(createConversationUrl)
 		defer resp.Body.Close()
 		conversation := &ClaudeConversation{}
-		err = brDecode(resp, &conversation)
+		err = Json.NewDecoder(resp.Body).Decode(&conversation)
 		if err != nil {
 			return nil, err, ""
 		}
@@ -349,10 +396,12 @@ func (c *claude) doChatWebRequest(ccr *ClaudeChatRequest) (*mreq.Response, error
 func (c *claude) goChatWeb(ccr *ClaudeChatRequest) (*Stream, error) {
 	resp, err, _ := c.doChatWebRequest(ccr)
 	if err != nil {
+		Log.Error("request web chat error", zap.Error(err))
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		logHttpStatusErr(resp, "claude web:request web chat http status error")
 		return nil, errors.New("request web chat http status error:" + resp.Status)
 	}
 
@@ -367,6 +416,7 @@ func (c *claude) goChatWebToApi(ccr *ClaudeChatRequest) (*Stream, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		logHttpStatusErr(resp, "claude web to api:request web chat http status error")
 		return nil, errors.New("request web chat http status error:" + resp.Status)
 	}
 
@@ -516,7 +566,9 @@ func (c *claude) commonToClaudeChatRequest(rc *ChatCompletionRequest) (*ClaudeCh
 		Timezone:           "Asia/Shanghai",
 		PersonalizedStyles: c.generateClaudePersonalizedStyle(),
 		RenderingMode:      "messages",
-		ConversationId:     rc.Claude.ConversationId,
+		ClaudeExt: &ClaudeExtRequest{
+			ConversationId: rc.Openai.ClaudeExt.ConversationId,
+			OrganizationId: rc.Openai.ClaudeExt.OrganizationId},
 	}
 	return ccr, nil
 }
@@ -546,7 +598,7 @@ func (c *claude) generateOrganizationId(forceRefresh bool) (string, error) {
 		return "", errors.New("request organization http status error:" + resp.Status)
 	}
 	var res []*ClaudeOrganization
-	err = brDecode(resp, &res)
+	err = Json.NewDecoder(resp.Body).Decode(&res)
 	if err != nil {
 		return "", err
 	}
@@ -564,28 +616,15 @@ func (c *claude) generateOrganizationId(forceRefresh bool) (string, error) {
 	return "", nil
 }
 
-// br解码成v
-func brDecode(resp *mreq.Response, v any) error {
-	if resp.Header.Get("Content-Encoding") == "br" {
-		reader := brotli.NewReader(resp.Body)
-		err := Json.NewDecoder(reader).Decode(&v)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	err := Json.NewDecoder(resp.Body).Decode(&v)
+func logHttpStatusErr(res *mreq.Response, source string) {
+	b, err := readAllToString(res.Body)
 	if err != nil {
-		return err
+		Log.Error(source,
+			zap.Error(err),
+			zap.String("status", res.Status))
+		return
 	}
-	return nil
-}
-
-// br解码成string
-func brReadAllToString(resp *mreq.Response) (string, error) {
-	if resp.Header.Get("Content-Encoding") == "br" {
-		reader := brotli.NewReader(resp.Body)
-		return readAllToString(reader)
-	}
-	return readAllToString(resp.Body)
+	Log.Error(source,
+		zap.String("status", res.Status),
+		zap.String("data", b))
 }

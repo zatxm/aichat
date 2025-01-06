@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"io"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
 	mreq "github.com/imroc/req/v3"
 	"golang.org/x/crypto/sha3"
@@ -465,13 +463,7 @@ func originStream(resp *mreq.Response) (*Stream, error) {
 	}
 
 	go func() {
-		var ir io.Reader
-		if resp.Header.Get("Content-Encoding") == "br" {
-			ir = brotli.NewReader(resp.Body)
-		} else {
-			ir = resp.Body
-		}
-		reader := bufio.NewReader(ir)
+		reader := bufio.NewReader(resp.Body)
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
